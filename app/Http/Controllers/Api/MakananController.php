@@ -8,6 +8,7 @@ use App\Models\Makanan;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Storage;
 
 class MakananController extends Controller
 {
@@ -46,7 +47,7 @@ class MakananController extends Controller
             // Aturan validasi tingkatPedas diperbarui untuk menerima input multilingual
             'tingkatPedas' => 'required|string|in:Tidak Pedas,Agak Pedas,Pedas,Sangat Pedas,Not Spicy,Mildly Spicy,Spicy,Very Spicy',
             'tekstur' => 'required|string|max:255',
-            'imageUri' => 'nullable|string|max:255',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048'
         ]);
 
         // 2. Ambil user_id dari header
@@ -57,8 +58,17 @@ class MakananController extends Controller
             return response()->json(['message' => 'User ID header is missing.'], 400);
         }
 
+        $imagePath = null;
+        if ($request->hasFile('image')) { // Periksa apakah ada file dengan nama 'image'
+            $imageFile = $request->file('image');
+            // Simpan gambar ke direktori 'makanan_images' di dalam public disk (storage/app/public)
+            $imagePath = $imageFile->store('makanan_images', 'public');
+            // $imagePath akan berisi path relatif seperti 'makanan_images/namafileunik.jpg'
+        }
+
         // 4. Masukkan user_id ke dalam data yang divalidasi SEBELUM membuat record
         $validatedData['user_id'] = $userId;
+        $validatedData['imageUri'] = $imagePath;
 
         // 5. Buat record Makanan menggunakan semua data yang divalidasi
         $makanan = Makanan::create($validatedData);
@@ -110,8 +120,24 @@ class MakananController extends Controller
             // Aturan validasi tingkatPedas diperbarui untuk menerima input multilingual
             'tingkatPedas' => 'sometimes|required|string|in:Tidak Pedas,Agak Pedas,Pedas,Sangat Pedas,Not Spicy,Mildly Spicy,Spicy,Very Spicy',
             'tekstur' => 'sometimes|required|string|max:255',
-            'imageUri' => 'nullable|string|max:255',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
         ]);
+
+        if ($request->hasFile('image')) {
+            // Hapus gambar lama jika ada dan bukan gambar default/placeholder
+            if ($makanan->imageUri && Storage::disk('public')->exists($makanan->imageUri)) {
+                Storage::disk('public')->delete($makanan->imageUri);
+            }
+            $imageFile = $request->file('image');
+            $imagePath = $imageFile->store('makanan_images', 'public');
+            $validatedData['imageUri'] = $imagePath; // Perbarui path gambar di database
+        } elseif (array_key_exists('imageUri', $validatedData) && $validatedData['imageUri'] === null) {
+            // Logika jika imageUri secara eksplisit di-set null dari klien (untuk menghapus gambar)
+            if ($makanan->imageUri && Storage::disk('public')->exists($makanan->imageUri)) {
+                Storage::disk('public')->delete($makanan->imageUri);
+            }
+            $validatedData['imageUri'] = null; // Set imageUri di database menjadi null
+        }
 
         $makanan->update($validatedData);
     
@@ -131,6 +157,10 @@ class MakananController extends Controller
         // Verifikasi bahwa makanan ini milik user yang meminta
         if ($makanan->user_id !== $userId) {
             return response()->json(['message' => 'Unauthorized access.'], 403);
+        }
+
+        if ($makanan->imageUri && Storage::disk('public')->exists($makanan->imageUri)) {
+            Storage::disk('public')->delete($makanan->imageUri);
         }
 
         $makanan->delete();
